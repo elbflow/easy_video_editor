@@ -11,6 +11,7 @@ import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.effect.Crop
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -1069,27 +1070,68 @@ class VideoUtils {
                     .apply { if (exists()) delete() }
             }
 
-            // Get video dimensions
+            // Get video dimensions and rotation
             val retriever = MediaMetadataRetriever()
-            val (videoWidth, videoHeight) = withContext(Dispatchers.IO) {
+            val (videoWidth, videoHeight, rotation) = withContext(Dispatchers.IO) {
                 try {
                     retriever.setDataSource(videoPath)
                     val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toFloat() ?: 0f
                     val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toFloat() ?: 0f
-                    width to height
+                    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0
+                    Triple(width, height, rotation)
                 } finally {
                     retriever.release()
                 }
             }
 
-            // Validate crop area fits within video bounds
-            require(x + width <= videoWidth.toInt()) { "Crop area exceeds video width: $x + $width > $videoWidth" }
-            require(y + height <= videoHeight.toInt()) { "Crop area exceeds video height: $y + $height > $videoHeight" }
+            // Calculate actual displayed dimensions after rotation
+            val (actualWidth, actualHeight) = when (rotation) {
+                90, 270 -> videoHeight to videoWidth
+                else -> videoWidth to videoHeight
+            }
 
-            // Calculate scale factors to achieve the crop through scaling
-            // We scale the video up so that the desired crop area fills the output
-            val scaleX = videoWidth / width.toFloat()
-            val scaleY = videoHeight / height.toFloat()
+            // Validate crop area fits within actual video bounds
+            require(x + width <= actualWidth.toInt()) { "Crop area exceeds video width: $x + $width > $actualWidth" }
+            require(y + height <= actualHeight.toInt()) { "Crop area exceeds video height: $y + $height > $actualHeight" }
+
+            // Transform crop coordinates to native video space based on rotation
+            val (nativeX, nativeY, nativeWidth, nativeHeight) = when (rotation) {
+                90 -> {
+                    // 90° clockwise: displayed (x,y) maps to native (y, width-x-w)
+                    val nx = y
+                    val ny = videoWidth.toInt() - x - width
+                    val nw = height
+                    val nh = width
+                    listOf(nx, ny, nw, nh)
+                }
+                180 -> {
+                    // 180°: displayed (x,y) maps to native (width-x-w, height-y-h)
+                    val nx = videoWidth.toInt() - x - width
+                    val ny = videoHeight.toInt() - y - height
+                    val nw = width
+                    val nh = height
+                    listOf(nx, ny, nw, nh)
+                }
+                270 -> {
+                    // 270° clockwise: displayed (x,y) maps to native (height-y-h, x)
+                    val nx = videoHeight.toInt() - y - height
+                    val ny = x
+                    val nw = height
+                    val nh = width
+                    listOf(nx, ny, nw, nh)
+                }
+                else -> {
+                    // 0° or no rotation
+                    listOf(x, y, width, height)
+                }
+            }
+
+            // Convert native crop coordinates to NDC (-1 to 1)
+            // NDC coordinates: -1 = left/bottom edge, 1 = right/top edge
+            val left = (2f * nativeX / videoWidth) - 1f
+            val right = (2f * (nativeX + nativeWidth) / videoWidth) - 1f
+            val bottom = 1f - (2f * (nativeY + nativeHeight) / videoHeight)
+            val top = 1f - (2f * nativeY / videoHeight)
 
             // Transformer operations on Main thread
             return withContext(Dispatchers.Main) {
@@ -1097,16 +1139,14 @@ class VideoUtils {
                     val mediaItem =
                         MediaItem.Builder().setUri(Uri.fromFile(File(videoPath))).build()
 
+                    val cropEffect = Crop(left, right, bottom, top)
+
                     val editedMediaItem =
                         EditedMediaItem.Builder(mediaItem)
                             .setEffects(
                                 Effects(
                                     emptyList(),
-                                    listOf(
-                                        ScaleAndRotateTransformation.Builder()
-                                            .setScale(scaleX, scaleY)
-                                            .build()
-                                    )
+                                    listOf(cropEffect)
                                 )
                             )
                             .build()

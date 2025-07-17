@@ -831,17 +831,46 @@ class VideoUtils {
             throw VideoError.invalidAsset
         }
         
-        // Get video dimensions
-        let videoSize = videoTrack.naturalSize
+        // Get video dimensions and transform
+        let naturalSize = videoTrack.naturalSize
+        let transform = videoTrack.preferredTransform
         
-        // Validate crop area fits within video bounds
-        guard x + width <= Int(videoSize.width),
-              y + height <= Int(videoSize.height) else {
+        // Calculate actual video dimensions after transform
+        let videoRect = CGRect(origin: .zero, size: naturalSize).applying(transform)
+        let actualVideoSize = CGSize(width: abs(videoRect.width), height: abs(videoRect.height))
+        
+        // Validate crop area fits within actual video bounds
+        guard x + width <= Int(actualVideoSize.width),
+              y + height <= Int(actualVideoSize.height) else {
             throw VideoError.invalidParameters
         }
         
-        // Create crop rectangle
-        let cropRect = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+        // Determine if video is rotated
+        let isRotated90Or270 = abs(transform.a) < 0.01 && abs(transform.d) < 0.01
+        
+        // Create crop rectangle in the correct coordinate space
+        let cropRect: CGRect
+        if isRotated90Or270 {
+            // For 90° or 270° rotation, we need to adjust coordinates
+            // Transform the crop coordinates back to the native video space
+            if transform.b > 0 {
+                // 90° clockwise rotation
+                cropRect = CGRect(x: CGFloat(y), y: naturalSize.height - CGFloat(x) - CGFloat(width), 
+                                width: CGFloat(height), height: CGFloat(width))
+            } else {
+                // 270° clockwise rotation (90° counter-clockwise)
+                cropRect = CGRect(x: naturalSize.width - CGFloat(y) - CGFloat(height), y: CGFloat(x), 
+                                width: CGFloat(height), height: CGFloat(width))
+            }
+        } else if transform.a < 0 && transform.d < 0 {
+            // 180° rotation
+            cropRect = CGRect(x: naturalSize.width - CGFloat(x) - CGFloat(width), 
+                            y: naturalSize.height - CGFloat(y) - CGFloat(height), 
+                            width: CGFloat(width), height: CGFloat(height))
+        } else {
+            // No rotation or 0°
+            cropRect = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+        }
         
         // Create composition
         let composition = AVMutableComposition()
