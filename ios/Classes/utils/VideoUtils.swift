@@ -79,9 +79,10 @@ class VideoUtils {
         let timeRange = CMTimeRange(start: startTime, end: endTime)
         
         // Create export session
+        let preset = getExportPresetForAsset(asset)
         guard let exportSession = AVAssetExportSession(
             asset: asset,
-            presetName: AVAssetExportPresetHighestQuality
+            presetName: preset
         ) else {
             throw VideoError.invalidAsset
         }
@@ -225,9 +226,10 @@ class VideoUtils {
             let outputPath = NSTemporaryDirectory() + UUID().uuidString + ".mp4"
             let outputURL = URL(fileURLWithPath: outputPath)
             
+            let preset = getExportPresetForAsset(composition)
             guard let exportSession = AVAssetExportSession(
                 asset: composition,
-                presetName: AVAssetExportPresetHighestQuality
+                presetName: preset
             ) else {
                 throw VideoError.invalidAsset
             }
@@ -590,9 +592,10 @@ class VideoUtils {
         // Export
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_video_\(Date().timeIntervalSince1970).mp4")
         
+        let preset = getExportPresetForAsset(composition)
         guard let exportSession = AVAssetExportSession(
             asset: composition,
-            presetName: AVAssetExportPresetHighestQuality
+            presetName: preset
         ) else {
             throw VideoError.exportFailed("Failed to create export session")
         }
@@ -654,6 +657,17 @@ class VideoUtils {
         default:
             return AVAssetExportPreset1280x720
         }
+    }
+    
+    private static func getExportPresetForAsset(_ asset: AVAsset) -> String {
+        guard let videoTrack = asset.tracks(withMediaType: .video).first else {
+            return AVAssetExportPreset1280x720
+        }
+        
+        let size = videoTrack.naturalSize
+        let height = Int(max(size.width, size.height))
+        
+        return getExportPresetForHeight(height)
     }
 
     // MARK: - Get Video Metadata
@@ -797,9 +811,10 @@ class VideoUtils {
     
     // MARK: - Helper Methods
     private static func export(composition: AVComposition, outputURL: URL, videoComposition: AVVideoComposition? = nil, workItem: DispatchWorkItem? = nil) throws -> String {
+        let preset = getExportPresetForAsset(composition)
         guard let exportSession = AVAssetExportSession(
             asset: composition,
-            presetName: AVAssetExportPresetHighestQuality
+            presetName: preset
         ) else {
             throw VideoError.exportFailed("Failed to create export session")
         }
@@ -953,9 +968,10 @@ class VideoUtils {
         // Export
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_video_\(Date().timeIntervalSince1970).mp4")
         
+        let preset = getExportPresetForAsset(composition)
         guard let exportSession = AVAssetExportSession(
             asset: composition,
-            presetName: AVAssetExportPresetHighestQuality
+            presetName: preset
         ) else {
             throw VideoError.exportFailed("Failed to create export session")
         }
