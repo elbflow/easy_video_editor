@@ -834,12 +834,10 @@ class VideoUtils {
         // Get video dimensions
         let videoSize = videoTrack.naturalSize
         let transform = videoTrack.preferredTransform
-        let isRotated = abs(transform.a) < 0.01
-        let actualVideoSize = isRotated ? CGSize(width: videoSize.height, height: videoSize.width) : videoSize
         
         // Validate crop area fits within video bounds
-        guard x + width <= Int(actualVideoSize.width),
-              y + height <= Int(actualVideoSize.height) else {
+        guard x + width <= Int(videoSize.width),
+              y + height <= Int(videoSize.height) else {
             throw VideoError.invalidParameters
         }
         
@@ -883,17 +881,9 @@ class VideoUtils {
         
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
         
-        // Apply original transform first, then translate for crop
-        var finalTransform = transform
-        
-        // Adjust transform based on rotation
-        if isRotated {
-            // For rotated videos, adjust the crop position
-            finalTransform = finalTransform.translatedBy(x: -CGFloat(y), y: -CGFloat(x))
-        } else {
-            // For non-rotated videos, standard translation
-            finalTransform = finalTransform.translatedBy(x: -CGFloat(x), y: -CGFloat(y))
-        }
+        // Apply transform and translation in the same way as cropVideo function
+        let finalTransform = transform
+            .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
         
         layerInstruction.setTransform(finalTransform, at: .zero)
         instruction.layerInstructions = [layerInstruction]
