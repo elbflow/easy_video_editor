@@ -908,14 +908,45 @@ class VideoUtils {
         
         // Create layer instruction
         let transformer = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
-        let finalTransform = transform
-            .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+        
+        // Apply transforms in the correct order to handle rotated videos properly
+        // 1. First translate to crop position in native space
+        let cropTranslation = CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y)
+        
+        // 2. Apply the crop translation first, then the video's rotation
+        let rotatedTransform = cropTranslation.concatenating(transform)
+        
+        // 3. After rotation, the video might be positioned outside the visible area
+        // Calculate where the cropped area ends up after rotation and adjust
+        let croppedRect = CGRect(origin: .zero, size: cropRect.size)
+        let transformedRect = croppedRect.applying(transform)
+        
+        // Calculate adjustments needed to position the video correctly
+        let xAdjust = transformedRect.origin.x < 0 ? -transformedRect.origin.x : 0
+        let yAdjust = transformedRect.origin.y < 0 ? -transformedRect.origin.y : 0
+        
+        // Apply final adjustment to ensure the cropped content is visible
+        let finalTransform = rotatedTransform.concatenating(
+            CGAffineTransform(translationX: xAdjust, y: yAdjust)
+        )
+        
         transformer.setTransform(finalTransform, at: .zero)
         instruction.layerInstructions = [transformer]
         
         // Create video composition
         let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = cropRect.size
+        
+        // For rotated videos, we need to adjust the render size
+        // The output size should match the requested crop dimensions (width x height)
+        // regardless of the video's rotation
+        var renderWidth = CGFloat(width)
+        var renderHeight = CGFloat(height)
+        
+        // Ensure dimensions are even for H.264 compatibility
+        if Int(renderWidth) % 2 != 0 { renderWidth += 1 }
+        if Int(renderHeight) % 2 != 0 { renderHeight += 1 }
+        
+        videoComposition.renderSize = CGSize(width: renderWidth, height: renderHeight)
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
         videoComposition.instructions = [instruction]
         
