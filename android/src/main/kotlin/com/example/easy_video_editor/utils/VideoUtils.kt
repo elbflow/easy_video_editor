@@ -1063,108 +1063,115 @@ class VideoUtils {
                 require(width > 0) { "Width must be positive" }
                 require(height > 0) { "Height must be positive" }
             }
-            
+
             val outputFile = withContext(Dispatchers.IO) {
-                File(context.cacheDir, "cropped_area_video_${System.currentTimeMillis()}.mp4")
+                File(context.cacheDir, "cropped_video_${System.currentTimeMillis()}.mp4")
                     .apply { if (exists()) delete() }
             }
-            
+
             // Get video dimensions
             val retriever = MediaMetadataRetriever()
             val (videoWidth, videoHeight) = withContext(Dispatchers.IO) {
                 try {
                     retriever.setDataSource(videoPath)
-                    val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
-                    val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
+                    val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toFloat() ?: 0f
+                    val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toFloat() ?: 0f
                     width to height
                 } finally {
                     retriever.release()
                 }
             }
-            
+
             // Validate crop area fits within video bounds
-            require(x + width <= videoWidth) { "Crop area exceeds video width: $x + $width > $videoWidth" }
-            require(y + height <= videoHeight) { "Crop area exceeds video height: $y + $height > $videoHeight" }
-            
-            // Calculate scale and translation
-            // We'll scale the video so that the crop area fills the output
-            val scaleX = videoWidth.toFloat() / width
-            val scaleY = videoHeight.toFloat() / height
-            
-            // Translation needed to position the crop area at origin
-            // Note: Media3 translation is in NDC space (-1 to 1)
-            val translateX = -2f * x.toFloat() / width - (scaleX - 1f)
-            val translateY = -2f * y.toFloat() / height - (scaleY - 1f)
-            
+            require(x + width <= videoWidth.toInt()) { "Crop area exceeds video width: $x + $width > $videoWidth" }
+            require(y + height <= videoHeight.toInt()) { "Crop area exceeds video height: $y + $height > $videoHeight" }
+
+            // Calculate scale factors to achieve the crop through scaling
+            // We scale the video up so that the desired crop area fills the output
+            val scaleX = videoWidth / width.toFloat()
+            val scaleY = videoHeight / height.toFloat()
+
             // Transformer operations on Main thread
             return withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { continuation ->
                     val mediaItem =
                         MediaItem.Builder().setUri(Uri.fromFile(File(videoPath))).build()
 
-                    val transformation = ScaleAndRotateTransformation.Builder()
-                        .setScale(scaleX, scaleY)
-                        .build()
-
-                    val editedMediaItem = EditedMediaItem.Builder(mediaItem)
-                        .setEffects(
-                            Effects(
-                                /* audioProcessors= */ emptyList(),
-                                /* videoEffects= */ listOf(transformation)
-                            )
-                        )
-                        .build()
-
-                    val transformer = Transformer.Builder(context)
-                        .setVideoMimeType(MimeTypes.VIDEO_H264)
-                        .addListener(object : Transformer.Listener {
-                            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                                ProgressManager.completeOperation()
-                                if (continuation.isActive) {
-                                    continuation.resume(outputFile.absolutePath)
-                                }
-                            }
-
-                            override fun onError(
-                                composition: Composition,
-                                exportResult: ExportResult,
-                                exception: ExportException
-                            ) {
-                                ProgressManager.completeOperation()
-                                outputFile.delete()
-                                if (continuation.isActive) {
-                                    val errorMessage = when {
-                                        exception.cause?.message?.contains("SIGABRT") == true ->
-                                            "Error cropping area: Video processing failed"
-                                        else -> "Error cropping area: ${exception.message}"
-                                    }
-                                    continuation.resumeWithException(
-                                        VideoException(errorMessage, exception)
+                    val editedMediaItem =
+                        EditedMediaItem.Builder(mediaItem)
+                            .setEffects(
+                                Effects(
+                                    emptyList(),
+                                    listOf(
+                                        ScaleAndRotateTransformation.Builder()
+                                            .setScale(scaleX, scaleY)
+                                            .build()
                                     )
-                                }
-                            }
-                        })
-                        .build()
+                                )
+                            )
+                            .build()
 
-                    // Report progress
-                    val progressHolder = Transformer.ProgressHolder()
-                    ProgressManager.startOperation {
-                        val progress = transformer.getProgress(progressHolder)
-                        if (progress != Transformer.PROGRESS_STATE_NOT_STARTED) {
-                            progressHolder.progress
-                        } else {
-                            0
-                        }
-                    }
+                    val transformer =
+                        Transformer.Builder(context)
+                            .addListener(
+                                object : Transformer.Listener {
+                                    override fun onCompleted(
+                                        composition: Composition,
+                                        exportResult: ExportResult
+                                    ) {
+                                        if (continuation.isActive) {
+                                            continuation.resume(outputFile.absolutePath)
+                                        }
+                                    }
+
+                                    override fun onError(
+                                        composition: Composition,
+                                        exportResult: ExportResult,
+                                        exportException: ExportException
+                                    ) {
+                                        if (continuation.isActive) {
+                                            continuation.resumeWithException(
+                                                VideoException(
+                                                    "Failed to crop video: ${exportException.message}",
+                                                    exportException
+                                                )
+                                            )
+                                        }
+                                        outputFile.delete()
+                                    }
+                                }
+                            )
+                            .build()
 
                     transformer.start(editedMediaItem, outputFile.absolutePath)
 
-                    // Handle cancellation
-                    continuation.invokeOnCancellation {
-                        if (transformer.getProgress(progressHolder) != Transformer.PROGRESS_STATE_NOT_STARTED) {
-                            transformer.cancel()
-                            outputFile.delete()
+                    // Set up progress tracking
+                    val progressHolder = androidx.media3.transformer.ProgressHolder()
+                    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                    mainHandler.post(
+                        object : Runnable {
+                            override fun run() {
+                                val progressState = transformer.getProgress(progressHolder)
+                                // Report progress to ProgressManager
+                                // Send progress updates more frequently
+                                // Always report progress as long as we have a valid progress value
+                                if (progressHolder.progress >= 0) {
+                                    // Report progress to ProgressManager
+                                    ProgressManager.getInstance().reportProgress(progressHolder.progress / 100.0)
+                                }
+                                
+                                // Continue polling if the transformer has started (simplified condition)
+                                // The original Media3 example uses this condition, which might be more reliable
+                                if (progressState != Transformer.PROGRESS_STATE_NOT_STARTED) {
+                                    mainHandler.postDelayed(this, 200) // Update every 200ms - better balance
+                                }
+                            }
                         }
+                    )
+
+                    continuation.invokeOnCancellation {
+                        transformer.cancel()
+                        outputFile.delete()
                     }
                 }
             }

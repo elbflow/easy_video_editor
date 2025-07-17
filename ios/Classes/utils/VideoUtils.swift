@@ -833,7 +833,6 @@ class VideoUtils {
         
         // Get video dimensions
         let videoSize = videoTrack.naturalSize
-        let transform = videoTrack.preferredTransform
         
         // Validate crop area fits within video bounds
         guard x + width <= Int(videoSize.width),
@@ -852,7 +851,7 @@ class VideoUtils {
         ) else {
             throw VideoError.exportFailed("Failed to create composition video track")
         }
-        
+
         // Add audio track if available
         var compositionAudioTrack: AVMutableCompositionTrack?
         if let audioTrack = asset.tracks(withMediaType: .audio).first {
@@ -860,41 +859,52 @@ class VideoUtils {
                 withMediaType: .audio,
                 preferredTrackID: kCMPersistentTrackID_Invalid
             )
+            try compositionAudioTrack?.insertTimeRange(
+                CMTimeRange(start: .zero, duration: asset.duration),
+                of: audioTrack,
+                at: .zero
+            )
         }
         
-        // Insert video and audio into composition
-        let timeRange = CMTimeRange(start: .zero, duration: asset.duration)
-        try compositionVideoTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
-        if let audioTrack = asset.tracks(withMediaType: .audio).first,
-           let compositionAudioTrack = compositionAudioTrack {
-            try compositionAudioTrack.insertTimeRange(timeRange, of: audioTrack, at: .zero)
-        }
+        // Add video track
+        try compositionVideoTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: asset.duration),
+            of: videoTrack,
+            at: .zero
+        )
         
-        // Create video composition for crop
+        // Create video instruction
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+        
+        // Create layer instruction
+        let transformer = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
+        let transform = videoTrack.preferredTransform
+            .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+        transformer.setTransform(transform, at: .zero)
+        instruction.layerInstructions = [transformer]
+        
+        // Create video composition
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = cropRect.size
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-        
-        // Create layer instruction for crop
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = timeRange
-        
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
-        
-        // Apply transform and translation in the same way as cropVideo function
-        let finalTransform = transform
-            .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
-        
-        layerInstruction.setTransform(finalTransform, at: .zero)
-        instruction.layerInstructions = [layerInstruction]
-        
         videoComposition.instructions = [instruction]
         
-        // Create output URL
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cropped_area_video_\(Date().timeIntervalSince1970).mp4")
-        
         // Export
-        return try export(composition: composition, outputURL: outputURL, videoComposition: videoComposition, workItem: workItem)
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_video_\(Date().timeIntervalSince1970).mp4")
+        
+        guard let exportSession = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw VideoError.exportFailed("Failed to create export session")
+        }
+        
+        exportSession.outputURL = outputURL
+        exportSession.outputFileType = .mp4
+        exportSession.videoComposition = videoComposition
+        
+        try exportWithCancellation(exportSession: exportSession, workItem: workItem)
+        return outputURL.path
     }
 }
