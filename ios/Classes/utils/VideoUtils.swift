@@ -900,54 +900,14 @@ class VideoUtils {
         
         // Create layer instruction
         let transformer = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
-        
-        // To crop correctly, we need to:
-        // 1. Apply the video's preferred transform (handles rotation)
-        // 2. Translate so the crop area appears at origin
-        
-        // First, we need to figure out where the crop rectangle is in the native video space
-        // The input x,y,width,height are in the rotated (display) coordinate space
-        
-        var cropTransform = CGAffineTransform.identity
-        
-        // Check the video orientation based on transform values
-        if transform.a == 0 && transform.b == 1.0 && transform.c == -1.0 && transform.d == 0 {
-            // 90° clockwise rotation (Portrait)
-            // The video is rotated 90° clockwise, so to crop at display coordinates (x,y),
-            // we need to translate in the native space
-            cropTransform = CGAffineTransform(translationX: -CGFloat(y), y: naturalSize.width - CGFloat(x) - CGFloat(width))
-        } else if transform.a == 0 && transform.b == -1.0 && transform.c == 1.0 && transform.d == 0 {
-            // 270° clockwise rotation (90° counter-clockwise, Portrait Upside Down)
-            // For 270° rotation: display x maps to native height-y-height, display y maps to native x
-            cropTransform = CGAffineTransform(translationX: naturalSize.height - CGFloat(y) - CGFloat(height), y: -CGFloat(x))
-        } else if transform.a == -1.0 && transform.b == 0 && transform.c == 0 && transform.d == -1.0 {
-            // 180° rotation (Landscape Left)
-            cropTransform = CGAffineTransform(translationX: naturalSize.width - CGFloat(x) - CGFloat(width), y: naturalSize.height - CGFloat(y) - CGFloat(height))
-        } else {
-            // 0° rotation (Landscape Right) or identity transform
-            cropTransform = CGAffineTransform(translationX: -CGFloat(x), y: -CGFloat(y))
-        }
-        
-        // Apply crop translation first, then the video's rotation
-        let finalTransform = cropTransform.concatenating(transform)
-        
+        let finalTransform = videoTrack.preferredTransform
+            .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
         transformer.setTransform(finalTransform, at: .zero)
-        instruction.layerInstructions = [transformer]
+        instruction.layerInstructions = [finalTransform]
         
         // Create video composition
         let videoComposition = AVMutableVideoComposition()
-        
-        // For rotated videos, we need to adjust the render size
-        // The output size should match the requested crop dimensions (width x height)
-        // regardless of the video's rotation
-        var renderWidth = CGFloat(width)
-        var renderHeight = CGFloat(height)
-        
-        // Ensure dimensions are even for H.264 compatibility
-        if Int(renderWidth) % 2 != 0 { renderWidth += 1 }
-        if Int(renderHeight) % 2 != 0 { renderHeight += 1 }
-        
-        videoComposition.renderSize = CGSize(width: renderWidth, height: renderHeight)
+        videoComposition.renderSize = cropRect.size
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
         videoComposition.instructions = [instruction]
         
