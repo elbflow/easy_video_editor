@@ -903,7 +903,7 @@ class VideoUtils {
         let finalTransform = videoTrack.preferredTransform
             .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
         transformer.setTransform(finalTransform, at: .zero)
-        instruction.layerInstructions = [finalTransform]
+        instruction.layerInstructions = [transformer]
         
         // Create video composition
         let videoComposition = AVMutableVideoComposition()
