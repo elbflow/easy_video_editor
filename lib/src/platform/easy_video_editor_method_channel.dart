@@ -1,3 +1,5 @@
+import 'dart:ui' show Offset, Size;
+
 import 'package:easy_video_editor/src/enums/enums.dart';
 import 'package:easy_video_editor/src/models/video_metadata.dart';
 import 'package:flutter/foundation.dart';
@@ -146,6 +148,18 @@ class MethodChannelEasyVideoEditor extends EasyVideoEditorPlatform {
     final result = await methodChannel.invokeMethod<String>('flipVideo', {
       'videoPath': videoPath,
       'flipDirection': flipDirection.value,
+    });
+    return result;
+  }
+
+  @override
+  Future<String?> cropArea(String videoPath, Offset offset, Size size) async {
+    final result = await methodChannel.invokeMethod<String>('cropArea', {
+      'videoPath': videoPath,
+      'x': offset.dx.toInt(),
+      'y': offset.dy.toInt(),
+      'width': size.width.toInt(),
+      'height': size.height.toInt(),
     });
     return result;
   }

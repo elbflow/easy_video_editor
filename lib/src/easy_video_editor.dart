@@ -1,3 +1,5 @@
+import 'dart:ui' show Offset, Size;
+
 import 'enums/enums.dart';
 import 'models/models.dart';
 import 'platform/platform.dart';
@@ -112,5 +114,14 @@ class EasyVideoEditor {
   /// Flips a video horizontally or vertically.
   Future<String?> flipVideo(String videoPath, FlipDirection flipDirection) {
     return EasyVideoEditorPlatform.instance.flipVideo(videoPath, flipDirection);
+  }
+
+  /// Crops a video to a specific rectangular area.
+  ///
+  /// [videoPath] is the path to the video file.
+  /// [offset] is the top-left position of the crop area (in pixels).
+  /// [size] is the width and height of the crop area (in pixels).
+  Future<String?> cropArea(String videoPath, Offset offset, Size size) {
+    return EasyVideoEditorPlatform.instance.cropArea(videoPath, offset, size);
   }
 }

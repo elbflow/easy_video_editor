@@ -1046,6 +1046,129 @@ class VideoUtils {
                 }
             }
         }
+
+        suspend fun cropArea(
+            context: Context,
+            videoPath: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int
+        ): String {
+            // File operations on IO thread
+            withContext(Dispatchers.IO) {
+                require(File(videoPath).exists()) { "Input video file does not exist" }
+                require(x >= 0) { "X position must be non-negative" }
+                require(y >= 0) { "Y position must be non-negative" }
+                require(width > 0) { "Width must be positive" }
+                require(height > 0) { "Height must be positive" }
+            }
+            
+            val outputFile = withContext(Dispatchers.IO) {
+                File(context.cacheDir, "cropped_area_video_${System.currentTimeMillis()}.mp4")
+                    .apply { if (exists()) delete() }
+            }
+            
+            // Get video dimensions
+            val retriever = MediaMetadataRetriever()
+            val (videoWidth, videoHeight) = withContext(Dispatchers.IO) {
+                try {
+                    retriever.setDataSource(videoPath)
+                    val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
+                    val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
+                    width to height
+                } finally {
+                    retriever.release()
+                }
+            }
+            
+            // Validate crop area fits within video bounds
+            require(x + width <= videoWidth) { "Crop area exceeds video width: $x + $width > $videoWidth" }
+            require(y + height <= videoHeight) { "Crop area exceeds video height: $y + $height > $videoHeight" }
+            
+            // Calculate scale and translation
+            // We'll scale the video so that the crop area fills the output
+            val scaleX = videoWidth.toFloat() / width
+            val scaleY = videoHeight.toFloat() / height
+            
+            // Translation needed to position the crop area at origin
+            // Note: Media3 translation is in NDC space (-1 to 1)
+            val translateX = -2f * x.toFloat() / width - (scaleX - 1f)
+            val translateY = -2f * y.toFloat() / height - (scaleY - 1f)
+            
+            // Transformer operations on Main thread
+            return withContext(Dispatchers.Main) {
+                suspendCancellableCoroutine { continuation ->
+                    val mediaItem =
+                        MediaItem.Builder().setUri(Uri.fromFile(File(videoPath))).build()
+
+                    val transformation = ScaleAndRotateTransformation.Builder()
+                        .setScale(scaleX, scaleY)
+                        .build()
+
+                    val editedMediaItem = EditedMediaItem.Builder(mediaItem)
+                        .setEffects(
+                            Effects(
+                                /* audioProcessors= */ emptyList(),
+                                /* videoEffects= */ listOf(transformation)
+                            )
+                        )
+                        .build()
+
+                    val transformer = Transformer.Builder(context)
+                        .setVideoMimeType(MimeTypes.VIDEO_H264)
+                        .addListener(object : Transformer.Listener {
+                            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                                ProgressManager.completeOperation()
+                                if (continuation.isActive) {
+                                    continuation.resume(outputFile.absolutePath)
+                                }
+                            }
+
+                            override fun onError(
+                                composition: Composition,
+                                exportResult: ExportResult,
+                                exception: ExportException
+                            ) {
+                                ProgressManager.completeOperation()
+                                outputFile.delete()
+                                if (continuation.isActive) {
+                                    val errorMessage = when {
+                                        exception.cause?.message?.contains("SIGABRT") == true ->
+                                            "Error cropping area: Video processing failed"
+                                        else -> "Error cropping area: ${exception.message}"
+                                    }
+                                    continuation.resumeWithException(
+                                        VideoException(errorMessage, exception)
+                                    )
+                                }
+                            }
+                        })
+                        .build()
+
+                    // Report progress
+                    val progressHolder = Transformer.ProgressHolder()
+                    ProgressManager.startOperation {
+                        val progress = transformer.getProgress(progressHolder)
+                        if (progress != Transformer.PROGRESS_STATE_NOT_STARTED) {
+                            progressHolder.progress
+                        } else {
+                            0
+                        }
+                    }
+
+                    transformer.start(editedMediaItem, outputFile.absolutePath)
+
+                    // Handle cancellation
+                    continuation.invokeOnCancellation {
+                        if (transformer.getProgress(progressHolder) != Transformer.PROGRESS_STATE_NOT_STARTED) {
+                            transformer.cancel()
+                            outputFile.delete()
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

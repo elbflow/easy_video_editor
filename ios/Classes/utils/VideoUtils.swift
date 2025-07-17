@@ -813,4 +813,98 @@ class VideoUtils {
         try exportWithCancellation(exportSession: exportSession, workItem: workItem)
         return outputURL.path
     }
+    
+    // MARK: - Crop Area
+    static func cropArea(videoPath: String, x: Int, y: Int, width: Int, height: Int, workItem: DispatchWorkItem? = nil) throws -> String {
+        guard FileManager.default.fileExists(atPath: videoPath) else {
+            throw VideoError.fileNotFound
+        }
+        
+        // Validate parameters
+        guard x >= 0, y >= 0, width > 0, height > 0 else {
+            throw VideoError.invalidParameters
+        }
+        
+        // Load video asset
+        let asset = AVAsset(url: URL(fileURLWithPath: videoPath))
+        guard let videoTrack = asset.tracks(withMediaType: .video).first else {
+            throw VideoError.invalidAsset
+        }
+        
+        // Get video dimensions
+        let videoSize = videoTrack.naturalSize
+        let transform = videoTrack.preferredTransform
+        let isRotated = abs(transform.a) < 0.01
+        let actualVideoSize = isRotated ? CGSize(width: videoSize.height, height: videoSize.width) : videoSize
+        
+        // Validate crop area fits within video bounds
+        guard x + width <= Int(actualVideoSize.width),
+              y + height <= Int(actualVideoSize.height) else {
+            throw VideoError.invalidParameters
+        }
+        
+        // Create crop rectangle
+        let cropRect = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+        
+        // Create composition
+        let composition = AVMutableComposition()
+        guard let compositionVideoTrack = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            throw VideoError.exportFailed("Failed to create composition video track")
+        }
+        
+        // Add audio track if available
+        var compositionAudioTrack: AVMutableCompositionTrack?
+        if let audioTrack = asset.tracks(withMediaType: .audio).first {
+            compositionAudioTrack = composition.addMutableTrack(
+                withMediaType: .audio,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            )
+        }
+        
+        // Insert video and audio into composition
+        let timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+        try compositionVideoTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
+        if let audioTrack = asset.tracks(withMediaType: .audio).first,
+           let compositionAudioTrack = compositionAudioTrack {
+            try compositionAudioTrack.insertTimeRange(timeRange, of: audioTrack, at: .zero)
+        }
+        
+        // Create video composition for crop
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = cropRect.size
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        
+        // Create layer instruction for crop
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = timeRange
+        
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
+        
+        // Apply original transform first, then translate for crop
+        var finalTransform = transform
+        
+        // Adjust transform based on rotation
+        if isRotated {
+            // For rotated videos, adjust the crop position
+            finalTransform = finalTransform.translatedBy(x: -CGFloat(y), y: -CGFloat(x))
+        } else {
+            // For non-rotated videos, standard translation
+            finalTransform = finalTransform.translatedBy(x: -CGFloat(x), y: -CGFloat(y))
+        }
+        
+        layerInstruction.setTransform(finalTransform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        
+        videoComposition.instructions = [instruction]
+        
+        // Create output URL
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cropped_area_video_\(Date().timeIntervalSince1970).mp4")
+        
+        // Export
+        return try export(composition: composition, outputURL: outputURL, videoComposition: videoComposition, workItem: workItem)
+    }
 }

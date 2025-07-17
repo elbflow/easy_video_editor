@@ -1,3 +1,5 @@
+import 'dart:ui' show Offset, Size;
+
 import 'package:easy_video_editor/src/enums/enums.dart';
 import 'package:easy_video_editor/src/models/video_metadata.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -162,5 +164,16 @@ abstract class EasyVideoEditorPlatform extends PlatformInterface {
   /// Returns the path to the flipped video file, or null if the operation fails.
   Future<String?> flipVideo(String videoPath, FlipDirection flipDirection) {
     throw UnimplementedError('flipVideo() has not been implemented.');
+  }
+
+  /// Crops a video to a specific rectangular area.
+  ///
+  /// [videoPath] is the path to the source video file.
+  /// [offset] is the top-left position of the crop area (in pixels).
+  /// [size] is the width and height of the crop area (in pixels).
+  ///
+  /// Returns the path to the cropped video file, or null if the operation fails.
+  Future<String?> cropArea(String videoPath, Offset offset, Size size) {
+    throw UnimplementedError('cropArea() has not been implemented.');
   }
 }

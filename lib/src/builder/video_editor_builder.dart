@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show Offset, Size;
 
 import '../easy_video_editor.dart';
 import '../enums/enums.dart';
@@ -98,6 +99,18 @@ class VideoEditorBuilder {
     _operations.add(VideoOperation(
       VideoOperationType.flip,
       {'flipDirection': flipDirection},
+    ));
+    return this;
+  }
+
+  /// Adds crop area operation
+  ///
+  /// [offset] Top-left position of the crop area (in pixels)
+  /// [size] Width and height of the crop area (in pixels)
+  VideoEditorBuilder cropArea({required Offset offset, required Size size}) {
+    _operations.add(VideoOperation(
+      VideoOperationType.cropArea,
+      {'offset': offset, 'size': size},
     ));
     return this;
   }
@@ -244,6 +257,13 @@ class VideoEditorBuilder {
         return await _editor.flipVideo(
           inputPath,
           operation.params['flipDirection'] as FlipDirection,
+        );
+
+      case VideoOperationType.cropArea:
+        return await _editor.cropArea(
+          inputPath,
+          operation.params['offset'] as Offset,
+          operation.params['size'] as Size,
         );
     }
   }

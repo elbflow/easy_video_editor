@@ -23,4 +23,7 @@ enum VideoOperationType {
 
   /// Flip video
   flip,
+
+  /// Crop video to specific area
+  cropArea,
 }

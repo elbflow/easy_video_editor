@@ -14,6 +14,7 @@ enum MethodName: String {
     case cancelOperation = "cancelOperation"
     case getVideoMetadata = "getVideoMetadata"
     case flipVideo = "flipVideo"
+    case cropArea = "cropArea"
 }
 
 class CommandHandler {
@@ -32,7 +33,8 @@ class CommandHandler {
             .compressVideo: CompressVideoCommand(),
             .cancelOperation: CancelOperationCommand(),
             .getVideoMetadata: GetVideoMetadataCommand(),
-            .flipVideo: FlipVideoCommand()
+            .flipVideo: FlipVideoCommand(),
+            .cropArea: CropAreaCommand()
         ]
     }
     
