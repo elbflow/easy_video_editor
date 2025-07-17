@@ -908,9 +908,9 @@ class VideoUtils {
         
         // Create layer instruction
         let transformer = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
-        let transform = videoTrack.preferredTransform
+        let finalTransform = transform
             .concatenating(CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
-        transformer.setTransform(transform, at: .zero)
+        transformer.setTransform(finalTransform, at: .zero)
         instruction.layerInstructions = [transformer]
         
         // Create video composition
